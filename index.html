@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeAlpha Task Manager</title>
+    <style>
+        /* General Styles */
+        body { font-family: sans-serif; padding: 20px; background-color: #f4f5f7; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        
+        /* Dashboard & Form Styles */
+        .controls { margin-bottom: 20px; background: white; padding: 15px; border-radius: 8px; }
+        input, button { padding: 10px; margin: 5px; }
+        button { cursor: pointer; background-color: #0079bf; color: white; border: none; border-radius: 4px; }
+        
+        /* Utility Class for Hiding Elements (Replaces inline styles) */
+        .hidden { display: none !important; }
+        
+        /* Kanban Board Styles */
+        .board { display: flex; gap: 20px; overflow-x: auto; }
+        .column { 
+            flex: 1; 
+            background: #ebecf0; 
+            border-radius: 8px; 
+            padding: 10px; 
+            min-width: 250px;
+        }
+        .column h3 { text-align: center; color: #172b4d; }
+        
+        /* Task Card Styles */
+        .task-card { background: white; padding: 10px; margin-bottom: 10px; border-radius: 4px; box-shadow: 0 1px 0 rgba(9,30,66,.25); }
+        .task-meta { font-size: 0.8em; color: gray; display: flex; justify-content: space-between; margin-top: 5px; }
+        .comments-section { border-top: 1px solid #eee; margin-top: 5px; padding-top: 5px; font-size: 0.85em; }
+        
+        /* Small Button Styles (Moved from inline) */
+        .btn-sm { font-size: 10px; padding: 2px 5px; margin: 0 2px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Project Management Tool</h1>
+    
+    <div class="controls">
+        <div id="authSection">
+            <input type="text" id="usernameInput" placeholder="Enter Username">
+            <button onclick="register()">Login</button>
+        </div>
+        
+        <div id="projectSection" class="hidden">
+            <h3>Welcome, <span id="currentUser"></span></h3>
+            <input type="text" id="projectNameInput" placeholder="New Project Name">
+            <button onclick="createProject()">Create Project</button>
+            <br><br>
+            <label>Select Project: </label>
+            <select id="projectSelect" onchange="loadProject()"></select>
+        </div>
+    </div>
+
+    <div class="controls hidden" id="taskControls">
+        <input type="text" id="taskTitle" placeholder="Task Title">
+        <input type="text" id="assignee" placeholder="Assign To (Name)">
+        <button onclick="createTask()">Add Task</button>
+    </div>
+
+    <div class="board hidden" id="board">
+        <div class="column" id="col-todo">
+            <h3>To Do</h3>
+            <div id="list-todo"></div>
+        </div>
+        <div class="column" id="col-progress">
+            <h3>In Progress</h3>
+            <div id="list-progress"></div>
+        </div>
+        <div class="column" id="col-done">
+            <h3>Done</h3>
+            <div id="list-done"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const API_URL = 'http://localhost:3000';
+    let currentUser = null;
+    let currentProject = null;
+
+    async function register() {
+        const username = document.getElementById('usernameInput').value;
+        if(!username) return alert("Enter name");
+        currentUser = username;
+        
+        // Hide Auth, Show Projects (Using classList)
+        document.getElementById('authSection').classList.add('hidden');
+        document.getElementById('projectSection').classList.remove('hidden');
+        
+        document.getElementById('currentUser').innerText = currentUser;
+        fetchProjects();
+    }
+
+    async function createProject() {
+        const name = document.getElementById('projectNameInput').value;
+        if(!name) return;
+        await fetch(`${API_URL}/projects`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ name })
+        });
+        fetchProjects();
+    }
+
+    async function fetchProjects() {
+        const res = await fetch(`${API_URL}/projects`);
+        const projects = await res.json();
+        const select = document.getElementById('projectSelect');
+        select.innerHTML = '<option value="">Select a Project</option>';
+        projects.forEach(p => {
+            select.innerHTML += `<option value="${p.id}">${p.name}</option>`;
+        });
+    }
+
+    async function loadProject() {
+        const pid = document.getElementById('projectSelect').value;
+        if(!pid) return;
+        currentProject = pid;
+        
+        // Show Task Controls and Board
+        document.getElementById('taskControls').classList.remove('hidden');
+        document.getElementById('board').classList.remove('hidden');
+        
+        refreshBoard();
+    }
+
+    async function createTask() {
+        const title = document.getElementById('taskTitle').value;
+        const assignee = document.getElementById('assignee').value;
+        if(!title) return;
+        
+        await fetch(`${API_URL}/projects/${currentProject}/tasks`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ title, assignee })
+        });
+        refreshBoard();
+    }
+
+    async function addComment(taskId) {
+        const text = prompt("Enter your comment:");
+        if (!text) return;
+        await fetch(`${API_URL}/projects/${currentProject}/tasks/${taskId}/comments`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ text, user: currentUser })
+        });
+        refreshBoard();
+    }
+
+    async function moveTask(taskId, newStatus) {
+        await fetch(`${API_URL}/projects/${currentProject}/tasks/${taskId}/move`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ status: newStatus })
+        });
+        refreshBoard();
+    }
+
+    async function refreshBoard() {
+        const res = await fetch(`${API_URL}/projects`);
+        const projects = await res.json();
+        const project = projects.find(p => p.id == currentProject);
+        
+        ['todo', 'progress', 'done'].forEach(id => document.getElementById(`list-${id}`).innerHTML = '');
+
+        project.tasks.forEach(task => {
+            const mapStatus = { 'To Do': 'todo', 'In Progress': 'progress', 'Done': 'done' };
+            const colId = mapStatus[task.status];
+            
+            const commentsHtml = task.comments.map(c => `<div><b>${c.user}:</b> ${c.text}</div>`).join('');
+            
+            // Updated Button HTML to use 'btn-sm' class
+            const html = `
+                <div class="task-card">
+                    <strong>${task.title}</strong>
+                    <div class="task-meta">Assigned to: ${task.assignee}</div>
+                    <div class="task-meta">
+                        <button class="btn-sm" onclick="moveTask(${task.id}, 'In Progress')">Start</button>
+                        <button class="btn-sm" onclick="moveTask(${task.id}, 'Done')">Done</button>
+                        <button class="btn-sm" onclick="addComment(${task.id})">Comment</button>
+                    </div>
+                    <div class="comments-section">${commentsHtml}</div>
+                </div>
+            `;
+            document.getElementById(`list-${colId}`).innerHTML += html;
+        });
+    }
+</script>
+
+</body>
+</html>
